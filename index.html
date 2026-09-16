@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="Private team project idea vault"
+    >
+
+    <title>Project Vault</title>
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+    <!-- =====================================================
+         BACKGROUND
+    ====================================================== -->
+
+    <div class="background-grid"></div>
+    <div class="background-glow glow-one"></div>
+    <div class="background-glow glow-two"></div>
+
+
+    <!-- =====================================================
+         SIDEBAR
+    ====================================================== -->
+
+    <aside class="sidebar">
+
+        <div class="brand">
+
+            <div class="brand-mark">
+                PV
+            </div>
+
+            <div>
+                <h1>Project Vault</h1>
+                <span>TEAM KNOWLEDGE BASE</span>
+            </div>
+
+        </div>
+
+
+        <nav class="navigation">
+
+            <button
+                class="nav-item active"
+                data-view="dashboard"
+            >
+                <span>⌂</span>
+                Dashboard
+            </button>
+
+            <button
+                class="nav-item"
+                data-view="projects"
+            >
+                <span>◈</span>
+                Projects
+            </button>
+
+            <button
+                class="nav-item"
+                data-view="favorites"
+            >
+                <span>★</span>
+                Favorites
+            </button>
+
+        </nav>
+
+
+        <div class="sidebar-section">
+
+            <div class="sidebar-heading">
+                CATEGORIES
+            </div>
+
+            <button class="category-button" data-category="Security">
+                <span class="category-dot"></span>
+                Security
+            </button>
+
+            <button class="category-button" data-category="Systems">
+                <span class="category-dot"></span>
+                Systems
+            </button>
+
+            <button class="category-button" data-category="Networking">
+                <span class="category-dot"></span>
+                Networking
+            </button>
+
+            <button class="category-button" data-category="Cloud">
+                <span class="category-dot"></span>
+                Cloud
+            </button>
+
+            <button class="category-button" data-category="DevSecOps">
+                <span class="category-dot"></span>
+                DevSecOps
+            </button>
+
+            <button class="category-button" data-category="Hardware">
+                <span class="category-dot"></span>
+                Hardware
+            </button>
+
+        </div>
+
+
+        <div class="sidebar-footer">
+
+            <div class="connection-status">
+                <span class="status-indicator"></span>
+                LOCAL VAULT
+            </div>
+
+            <small>
+                Git-powered workspace
+            </small>
+
+        </div>
+
+    </aside>
+
+
+    <!-- =====================================================
+         MAIN APPLICATION
+    ====================================================== -->
+
+    <main class="main">
+
+        <!-- TOPBAR -->
+
+        <header class="topbar">
+
+            <div class="mobile-brand">
+                PROJECT VAULT
+            </div>
+
+            <div class="search-container">
+
+                <span class="search-icon">
+                    ⌕
+                </span>
+
+                <input
+                  type="search"
+                  id="searchInput"
+                  aria-label="Search projects, technologies, and ideas"
+                  placeholder="Search projects, technologies, ideas..."
+                >
+
+                <kbd>CTRL K</kbd>
+
+            </div>
+
+            <button
+                class="add-project-button"
+                id="addProjectButton"
+            >
+                + New Project
+            </button>
+
+        </header>
+
+
+        <!-- =================================================
+             DASHBOARD
+        ================================================== -->
+
+        <section
+            id="dashboardView"
+            class="view active-view"
+        >
+
+            <div class="hero">
+
+                <div>
+
+                    <div class="eyebrow">
+                        TEAM PROJECT INTELLIGENCE
+                    </div>
+
+                    <h2>
+                        Ideas worth
+                        <span>building.</span>
+                    </h2>
+
+                    <p>
+                        A shared technical notebook for projects,
+                        experiments, research and future builds.
+                    </p>
+
+                </div>
+
+                <div class="hero-decoration">
+                    <div class="orbit orbit-one"></div>
+                    <div class="orbit orbit-two"></div>
+                    <div class="orbit-core"></div>
+                </div>
+
+            </div>
+
+
+            <!-- STAT CARDS -->
+
+            <div class="stats-grid">
+
+                <div class="stat-card">
+
+                    <span class="stat-label">
+                        TOTAL PROJECTS
+                    </span>
+
+                    <strong id="totalProjects">
+                        0
+                    </strong>
+
+                </div>
+
+                <div class="stat-card">
+
+                    <span class="stat-label">
+                        IN DEVELOPMENT
+                    </span>
+
+                    <strong id="developmentProjects">
+                        0
+                    </strong>
+
+                </div>
+
+                <div class="stat-card">
+
+                    <span class="stat-label">
+                        RESEARCHING
+                    </span>
+
+                    <strong id="researchProjects">
+                        0
+                    </strong>
+
+                </div>
+
+                <div class="stat-card">
+
+                    <span class="stat-label">
+                        FAVORITES
+                    </span>
+
+                    <strong id="favoriteProjects">
+                        0
+                    </strong>
+
+                </div>
+
+            </div>
+
+
+            <!-- PROJECT AREA -->
+
+            <div class="section-header">
+
+                <div>
+                    <span class="section-kicker">
+                        VAULT
+                    </span>
+
+                    <h3>
+                        Recent projects
+                    </h3>
+                </div>
+
+                <button
+                    class="text-button"
+                    id="viewAllButton"
+                >
+                    View all →
+                </button>
+
+            </div>
+
+
+            <div
+                class="project-grid"
+                id="projectGrid"
+            ></div>
+
+        </section>
+
+
+        <!-- =================================================
+             PROJECTS VIEW
+        ================================================== -->
+
+        <section
+            id="projectsView"
+            class="view"
+        >
+
+            <div class="page-heading">
+
+                <span class="section-kicker">
+                    PROJECT DATABASE
+                </span>
+
+                <h2>
+                    All projects
+                </h2>
+
+                <p>
+                    Browse the complete team project vault.
+                </p>
+
+            </div>
+
+
+            <div class="filter-bar">
+
+                <button
+                    class="filter active"
+                    data-status="all"
+                >
+                    All
+                </button>
+
+                <button
+                    class="filter"
+                    data-status="Idea"
+                >
+                    Ideas
+                </button>
+
+                <button
+                    class="filter"
+                    data-status="Researching"
+                >
+                    Researching
+                </button>
+
+                <button
+                    class="filter"
+                    data-status="Building"
+                >
+                    Building
+                </button>
+
+                <button
+                    class="filter"
+                    data-status="Testing"
+                >
+                    Testing
+                </button>
+
+                <button
+                    class="filter"
+                    data-status="Complete"
+                >
+                    Complete
+                </button>
+
+            </div>
+
+
+            <div
+                class="project-grid"
+                id="allProjectGrid"
+            ></div>
+
+        </section>
+
+
+        <!-- =================================================
+             FAVORITES VIEW
+        ================================================== -->
+
+        <section
+            id="favoritesView"
+            class="view"
+        >
+
+            <div class="page-heading">
+
+                <span class="section-kicker">
+                    SHORTLIST
+                </span>
+
+                <h2>
+                    Favorites
+                </h2>
+
+                <p>
+                    Projects your team wants to keep close.
+                </p>
+
+            </div>
+
+            <div
+                class="project-grid"
+                id="favoriteGrid"
+            ></div>
+
+        </section>
+
+    </main>
+
+
+    <!-- =====================================================
+         PROJECT MODAL
+    ====================================================== -->
+
+    <div
+        class="modal-overlay"
+        id="projectModal"
+    >
+
+        <div class="modal">
+
+            <button
+                class="modal-close"
+                id="modalClose"
+            >
+                ×
+            </button>
+
+            <div id="modalContent"></div>
+
+        </div>
+
+    </div>
+
+
+    <!-- =====================================================
+         ADD PROJECT MODAL
+    ====================================================== -->
+
+    <div
+        class="modal-overlay"
+        id="addModal"
+    >
+
+        <div class="modal add-modal">
+
+            <button
+                class="modal-close"
+                id="addModalClose"
+            >
+                ×
+            </button>
+
+            <div class="modal-header">
+
+                <span class="section-kicker">
+                    NEW ENTRY
+                </span>
+
+                <h2>
+                    New project
+                </h2>
+
+                <p>
+                    Capture the idea before it disappears.
+                </p>
+
+            </div>
+
+
+            <form id="projectForm">
+
+                <label>
+                    Project name
+
+                    <input
+                        type="text"
+                        id="projectName"
+                        required
+                    >
+
+                </label>
+
+
+                <label>
+                    Short description
+
+                    <textarea
+                        id="projectDescription"
+                        required
+                    ></textarea>
+
+                </label>
+
+
+                <label>
+                    Category
+
+                    <select id="projectCategory">
+
+                        <option>Security</option>
+                        <option>Systems</option>
+                        <option>Networking</option>
+                        <option>Cloud</option>
+                        <option>DevSecOps</option>
+                        <option>Hardware</option>
+
+                    </select>
+
+                </label>
+
+
+                <label>
+                    Status
+
+                    <select id="projectStatus">
+
+                        <option>Idea</option>
+                        <option>Researching</option>
+                        <option>Building</option>
+                        <option>Testing</option>
+                        <option>Complete</option>
+                        <option>Parked</option>
+
+                    </select>
+
+                </label>
+
+
+                <label>
+                    Technologies
+
+                    <input
+                        type="text"
+                        id="projectTech"
+                        placeholder="Go, Linux, Incus, eBPF"
+                    >
+
+                </label>
+
+
+                <button
+                    class="primary-button"
+                    type="submit"
+                >
+                    Create Project
+                </button>
+
+            </form>
+
+        </div>
+
+    </div>
+
+
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+
+</body>
+</html>
