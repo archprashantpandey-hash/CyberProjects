@@ -100,7 +100,8 @@ def test_experiment_uses_configured_duration(setup_runner, monkeypatch):
 
     runner.run_experiment("unused.yaml", "test-box")
 
-    assert durations == [5]
+    assert len(durations) == 1
+    assert durations[0] == pytest.approx(5, abs=0.01)
 
 
 def test_cleanup_is_attempted_when_chaos_application_fails(
@@ -322,3 +323,230 @@ def test_cleanup_receives_original_baseline(
     runner.run_experiment("unused.yaml", "test-box")
 
     assert received == [baseline]
+
+@pytest.fixture
+def setup_resource_runner(setup_runner, monkeypatch):
+    """Prepare an experiment with CPU and memory restrictions."""
+
+    events, calls = setup_runner
+    lifecycle = []
+
+    scenario = {
+        "name": "resource-resilience",
+        "duration_seconds": 5,
+        "network": {
+            "latency_ms": 100,
+            "packet_loss_percent": 2,
+        },
+        "resources": {
+            "cpu_percent": 25,
+            "memory_limit": "768MiB",
+        },
+        "checks": [
+            {
+                "name": "health-check",
+                "command": ["true"],
+                "timeout_seconds": 2,
+                "expected_exit_code": 0,
+            }
+        ],
+    }
+
+    baseline = {
+        "keys": [
+            "limits.cpu.allowance",
+            "limits.memory",
+            "limits.memory.enforce",
+        ],
+        "local": {},
+        "effective": {
+            "limits.cpu.allowance": "100ms/100ms",
+            "limits.memory": "4GiB",
+            "limits.memory.enforce": "hard",
+        },
+    }
+
+    applied = {
+        "limits.cpu.allowance": "25ms/100ms",
+        "limits.memory": "768MiB",
+        "limits.memory.enforce": "hard",
+    }
+
+    monkeypatch.setattr(
+        runner,
+        "load_scenario",
+        lambda path: scenario,
+    )
+
+    def capture(name, config):
+        lifecycle.append("capture")
+        return baseline
+
+    def apply(name, config):
+        lifecycle.append("apply")
+        return applied
+
+    def restore(name, original):
+        lifecycle.append("restore")
+
+    def verify(name, original):
+        lifecycle.append("verify_restoration")
+        return original["effective"]
+
+    def execute_checks(environment, checks, deadline):
+        lifecycle.append("application_checks")
+        return []
+
+    monkeypatch.setattr(
+        runner.resource_chaos,
+        "capture_resource_baseline",
+        capture,
+    )
+
+    monkeypatch.setattr(
+        runner.resource_chaos,
+        "apply_resource_chaos",
+        apply,
+    )
+
+    monkeypatch.setattr(
+        runner.resource_chaos,
+        "restore_resource_baseline",
+        restore,
+    )
+
+    monkeypatch.setattr(
+        runner.resource_chaos,
+        "verify_resource_restoration",
+        verify,
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "execute_workload_checks",
+        execute_checks,
+    )
+
+    return events, calls, lifecycle
+
+def test_resource_limits_apply_and_restore_on_success(
+    setup_resource_runner,
+):
+    events, calls, lifecycle = setup_resource_runner
+
+    runner.run_experiment("unused.yaml", "test-box")
+
+    assert lifecycle == [
+        "capture",
+        "apply",
+        "application_checks",
+        "restore",
+        "verify_restoration",
+    ]
+
+    event_names = [event for event, _ in events]
+
+    assert "resource_chaos_verified" in event_names
+    assert "resource_cleanup_verified" in event_names
+    assert "experiment_finished" in event_names
+
+def test_resources_restore_after_experiment_failure(
+    setup_resource_runner,
+    monkeypatch,
+):
+    events, calls, lifecycle = setup_resource_runner
+
+    def fail_checks(environment, checks, deadline):
+        lifecycle.append("application_checks")
+        raise RuntimeError("simulated application failure")
+
+    monkeypatch.setattr(
+        runner,
+        "execute_workload_checks",
+        fail_checks,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="simulated application failure",
+    ):
+        runner.run_experiment("unused.yaml", "test-box")
+
+    assert lifecycle == [
+        "capture",
+        "apply",
+        "application_checks",
+        "restore",
+        "verify_restoration",
+    ]
+
+    event_names = [event for event, _ in events]
+
+    assert "experiment_failed" in event_names
+    assert "resource_cleanup_verified" in event_names
+    assert "experiment_finished" in event_names
+
+    assert ("remove", "test-box") in calls
+
+def test_resources_restore_when_network_cleanup_fails(
+    setup_resource_runner,
+    monkeypatch,
+):
+    events, calls, lifecycle = setup_resource_runner
+
+    def fail_network_cleanup(name):
+        raise RuntimeError("simulated network cleanup failure")
+
+    monkeypatch.setattr(
+        runner,
+        "remove_network_chaos",
+        fail_network_cleanup,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="network cleanup could not be confirmed",
+    ):
+        runner.run_experiment("unused.yaml", "test-box")
+
+    assert lifecycle == [
+        "capture",
+        "apply",
+        "application_checks",
+        "restore",
+        "verify_restoration",
+    ]
+
+    event_names = [event for event, _ in events]
+
+    assert "cleanup_failed" in event_names
+    assert "resource_cleanup_verified" in event_names
+    assert "experiment_finished" not in event_names
+
+def test_resource_restoration_failure_is_reported(
+    setup_resource_runner,
+    monkeypatch,
+):
+    events, calls, lifecycle = setup_resource_runner
+
+    def fail_restore(name, baseline):
+        lifecycle.append("restore")
+        raise RuntimeError("simulated resource restoration failure")
+
+    monkeypatch.setattr(
+        runner.resource_chaos,
+        "restore_resource_baseline",
+        fail_restore,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="resource cleanup could not be confirmed",
+    ):
+        runner.run_experiment("unused.yaml", "test-box")
+
+    event_names = [event for event, _ in events]
+
+    assert "resource_cleanup_failed" in event_names
+    assert "resource_cleanup_verified" not in event_names
+    assert "experiment_finished" not in event_names

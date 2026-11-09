@@ -32,6 +32,16 @@ from vortex.ui import (
     show_warning,
 )
 
+from vortex.lifecycle.ttl import (
+    parse_ttl,
+    format_remaining,
+)
+
+from vortex.lifecycle.cleanup import (
+    cleanup_expired_environments,
+)
+
+from typing import Optional
 
 app = typer.Typer(
     name="vortex",
@@ -112,15 +122,16 @@ def environment_table(environments):
     """Build a formatted environment table."""
 
     table = Table(
-        box=box.ROUNDED,
-        border_style="cyan",
-        header_style="bold cyan",
-        expand=True,
+      box=box.ROUNDED,
+      border_style="cyan",
+      header_style="bold cyan",
+     expand=True,
     )
 
     table.add_column("ENVIRONMENT", style="bold white")
     table.add_column("STATUS")
     table.add_column("TYPE")
+    table.add_column("TTL / EXPIRY")
 
     for env in environments:
         state = env["state"].upper()
@@ -131,13 +142,24 @@ def environment_table(environments):
             else "yellow"
         )
 
+        expiration = env.get("expires_at")
+
+        # --- Fixed Indentation Below ---
+        try:
+            ttl_label = format_remaining(expiration)
+        except ValueError:
+            ttl_label = "INVALID"
+
         table.add_row(
             env["name"],
             Text(f"● {state}", style=status_style),
             env["type"],
+            ttl_label,
         )
 
     return table
+
+
 
 
 @app.command()
@@ -166,11 +188,16 @@ def status() -> None:
         "  Incus container engine\n\n"
         "AVAILABLE FEATURES\n"
         "  Environment management\n"
-        "  Network chaos testing\n"
-        "  Event recording\n"
-        "  Experiment verification\n"
+        "  Network chaos testing (latency and packet loss)\n"
+        "  CPU and memory resource restrictions\n"
+        "  Application health checks\n"
+        "  Event recording and experiment timelines\n"
+        "  Experiment verification and cleanup\n"
         "  Experiment reports\n"
-        "  Environment metrics"
+        "  Environment metrics\n"
+        "  TTL-based environment expiration\n"
+        "  Automatic expired-environment cleanup\n"
+        "  Concurrent operation protection"
     )
 
     show_panel("VORTEX CAPABILITIES", content)
@@ -182,8 +209,19 @@ def create(
         ...,
         help="Name for the new environment",
     ),
+    ttl: Optional[str] = typer.Option(
+        None,
+        "--ttl",
+        help="Environment lifetime, e.g. 30m, 2h or 1d.",
+    ),
 ) -> None:
     """Create a temporary Debian Linux environment."""
+
+    try:
+        ttl_seconds = parse_ttl(ttl)
+    except ValueError as error:
+        show_error(str(error))
+        raise typer.Exit(code=2) from error
 
     show_header(
         "CREATE",
@@ -191,14 +229,16 @@ def create(
             ("Environment", name),
             ("Operating system", "Debian 12"),
             ("Isolation", "Incus container"),
+            ("TTL", ttl or "No expiration"),
         ],
     )
 
     execute_action(
-        "Creating Linux environment",
-        create_instance,
-        name,
-    )
+    "Creating Linux environment",
+    create_instance,
+    name,
+    ttl_seconds,
+)
 
     show_panel(
         "ENVIRONMENT READY",
@@ -349,6 +389,52 @@ def destroy(
 
     show_success(f"Environment '{name}' deleted.")
 
+@app.command()
+def cleanup(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview expired environments without deleting them.",
+    ),
+) -> None:
+    """Remove expired Vortex-managed environments."""
+
+    show_header(
+        "CLEANUP",
+        [
+            ("Mode", "Preview" if dry_run else "Execution"),
+        ],
+    )
+
+    results = execute_action(
+        "Scanning expired environments",
+        cleanup_expired_environments,
+        dry_run,
+    )
+
+    if not results:
+        show_success("No expired environments found.")
+        return
+
+    table = Table(
+        box=box.ROUNDED,
+        border_style="cyan",
+        header_style="bold cyan",
+        expand=True,
+    )
+
+    table.add_column("ENVIRONMENT", style="bold white")
+    table.add_column("RESULT")
+    table.add_column("DETAIL")
+
+    for result in results:
+        table.add_row(
+            result["name"],
+            result["status"],
+            result["detail"],
+        )
+
+    console.print(table)
 
 @app.command()
 def run(
@@ -361,7 +447,7 @@ def run(
         help="Target environment",
     ),
 ) -> None:
-    """Run a verified network experiment."""
+    """Run a verified failure experiment from a scenario."""
 
     try:
         scenario_path = resolve_scenario(scenario)

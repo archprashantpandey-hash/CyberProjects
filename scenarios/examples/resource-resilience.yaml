@@ -1,0 +1,36 @@
+name: resource-resilience
+description: Verify workload stability under CPU, memory, and network constraints
+
+network:
+  latency_ms: 100
+  packet_loss_percent: 2
+
+resources:
+  cpu_percent: 25
+  memory_limit: "768MiB"
+
+duration_seconds: 10
+
+checks:
+  - name: container-identity
+    command:
+      - /usr/bin/id
+      - -u
+    timeout_seconds: 3
+    expected_exit_code: 0
+
+  - name: operating-system-check
+    command:
+      - /usr/bin/test
+      - -r
+      - /etc/os-release
+    timeout_seconds: 3
+    expected_exit_code: 0
+
+  - name: temporary-directory-check
+    command:
+      - /usr/bin/test
+      - -d
+      - /tmp
+    timeout_seconds: 3
+    expected_exit_code: 0

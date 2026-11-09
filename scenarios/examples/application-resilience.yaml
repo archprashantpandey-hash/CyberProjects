@@ -1,0 +1,32 @@
+name: application-resilience
+description: Verify workload checks during network impairment
+
+network:
+  latency_ms: 100
+  packet_loss_percent: 2
+
+duration_seconds: 10
+
+checks:
+  - name: container-identity
+    command:
+      - /usr/bin/id
+      - -u
+    timeout_seconds: 3
+    expected_exit_code: 0
+
+  - name: operating-system-check
+    command:
+      - /usr/bin/test
+      - -r
+      - /etc/os-release
+    timeout_seconds: 3
+    expected_exit_code: 0
+
+  - name: temporary-directory-check
+    command:
+      - /usr/bin/test
+      - -d
+      - /tmp
+    timeout_seconds: 3
+    expected_exit_code: 0

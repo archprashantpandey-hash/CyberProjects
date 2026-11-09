@@ -14,8 +14,14 @@ from vortex.chaos.network import (
     verify_network_cleanup,
 )
 from vortex.config import load_scenario
-from vortex.core.incus import require_managed
+from vortex.core.incus import require_active_environment as require_managed
+from vortex.lifecycle.locks import environment_lock
 from vortex.observe.recorder import EventRecorder
+from vortex.scenarios.workload import (
+    execute_workload_checks,
+    WorkloadCheckError,
+)
+from vortex.chaos import resources as resource_chaos
 
 
 def show_step(message: str) -> None:
@@ -55,7 +61,10 @@ def record_safely(
         )
 
 
-def run_experiment(scenario_path: str, environment: str) -> None:
+def _run_experiment_locked(
+    scenario_path: str,
+    environment: str,
+) -> None:
     """Run a verified network experiment and restore networking."""
 
     typer.echo()
@@ -106,6 +115,10 @@ def run_experiment(scenario_path: str, environment: str) -> None:
     recorder = EventRecorder(environment)
     network = scenario["network"]
 
+    resources_config = scenario.get("resources", {})
+    resources_requested = bool(resources_config)
+    resource_baseline = None
+
     latency = network["latency_ms"]
     packet_loss = network["packet_loss_percent"]
 
@@ -126,6 +139,22 @@ def run_experiment(scenario_path: str, environment: str) -> None:
 
         finish_step("PASSED")
 
+    # Capture original resource settings before experimentation.
+    if resources_requested:
+
+        show_step("Checking original resource configuration")
+
+        try:
+            resource_baseline = resource_chaos.capture_resource_baseline(
+                environment,
+                resources_config,
+            )
+        except Exception:
+            finish_step("FAILED")
+            raise
+
+        finish_step("PASSED")
+
     # Do not begin network changes if the initial event cannot be recorded.
     recorder.record(
         "experiment_started",
@@ -134,10 +163,7 @@ def run_experiment(scenario_path: str, environment: str) -> None:
 
     experiment_error = None
     cleanup_error = None
-    recording_errors = []
-
-    experiment_error = None
-    cleanup_error = None
+    resource_cleanup_error = None
     recording_errors = []
 
     try:
@@ -207,12 +233,120 @@ def run_experiment(scenario_path: str, environment: str) -> None:
 
         typer.echo()
 
+        if resources_requested:
+
+            show_step("Applying CPU and memory restrictions")
+
+            try:
+                actual_resources = resource_chaos.apply_resource_chaos(
+                    environment,
+                    resources_config,
+                )
+            except Exception:
+                finish_step("FAILED")
+                raise
+
+            finish_step("PASSED")
+
+            record_safely(
+                recorder,
+                "resource_chaos_verified",
+                {"settings": actual_resources},
+                recording_errors,
+            )
+
+            for key, value in actual_resources.items():
+                typer.echo(f"      {key}: {value}")
+
+        else:
+            typer.echo("  No CPU or memory restrictions requested.")
+
+        duration_started = time.monotonic()
+
+        checks = scenario.get("checks", [])
+
+        if checks:
+
+            show_step("Executing application checks")
+
+            try:
+                check_results = execute_workload_checks(
+                    environment,
+                    checks,
+                    deadline=(
+                        duration_started
+                        + scenario["duration_seconds"]
+                    ),
+                )
+
+            except Exception:
+                finish_step("FAILED")
+                raise
+
+            # Record every result before determining overall success.
+            for result in check_results:
+
+                record_safely(
+                    recorder,
+                    "application_check_completed",
+                    result,
+                    recording_errors,
+                )
+
+                typer.echo(
+                    f"      {result['name']}: "
+                    f"{result['status']} "
+                    f"({result['duration_seconds']} seconds)"
+                )
+
+                if result["stdout"]:
+                    typer.echo(
+                        f"         stdout: "
+                        f"{result['stdout'][:200]}"
+                    )
+
+                if result["stderr"]:
+                    typer.echo(
+                        f"         stderr: "
+                        f"{result['stderr'][:200]}"
+                    )
+
+            failed_checks = [
+                result
+                for result in check_results
+                if result["status"] != "PASSED"
+            ]
+
+            if failed_checks:
+                finish_step("FAILED")
+
+                raise WorkloadCheckError(
+                    f"{len(failed_checks)} of "
+                    f"{len(check_results)} application checks failed."
+                )
+
+            finish_step("PASSED")
+
+        else:
+            typer.echo(
+                "  No application checks configured."
+            )
+
+        remaining = max(
+            0,
+            scenario["duration_seconds"]
+            - (time.monotonic() - duration_started),
+        )
+
         show_step(
-            f"Running test ({scenario['duration_seconds']} seconds)"
+            f"Completing test window "
+            f"({scenario['duration_seconds']} seconds)"
         )
 
         try:
-            time.sleep(scenario["duration_seconds"])
+            if remaining > 0:
+                time.sleep(remaining)
+
         except Exception:
             finish_step("FAILED")
             raise
@@ -305,7 +439,54 @@ def run_experiment(scenario_path: str, environment: str) -> None:
             "  Network restoration not needed for this test."
         )
 
-    if cleanup_error is None:
+    # Restore resources independently of network cleanup.
+    if resources_requested:
+        typer.echo()
+
+        try:
+            show_step("Restoring original CPU and memory settings")
+
+            resource_chaos.restore_resource_baseline(
+                environment,
+                resource_baseline,
+            )
+            finish_step("OK")
+
+            show_step("Verifying resource restoration")
+
+            restored_resources = (
+                resource_chaos.verify_resource_restoration(
+                    environment,
+                    resource_baseline,
+                )
+            )
+            finish_step("PASSED")
+
+            record_safely(
+                recorder,
+                "resource_cleanup_verified",
+                {"settings": restored_resources},
+                recording_errors,
+            )
+
+        except BaseException as exc:
+            finish_step("FAILED")
+            resource_cleanup_error = exc
+
+            record_safely(
+                recorder,
+                "resource_cleanup_failed",
+                {
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+                recording_errors,
+            )
+
+    else:
+        typer.echo("  Resource restoration not needed for this test.")
+
+    if cleanup_error is None and resource_cleanup_error is None:
         record_safely(
             recorder,
             "experiment_finished",
@@ -320,6 +501,10 @@ def run_experiment(scenario_path: str, environment: str) -> None:
 
     if cleanup_error is not None:
         failures.append(cleanup_error)
+
+    if resource_cleanup_error is not None:
+
+        failures.append(resource_cleanup_error)
 
     if recording_errors:
         failures.append(
@@ -336,6 +521,12 @@ def run_experiment(scenario_path: str, environment: str) -> None:
                 "Experiment ended, but network cleanup could not "
                 f"be confirmed: {cleanup_error}"
             ) from cleanup_error
+
+        if resource_cleanup_error is not None:
+            raise RuntimeError(
+                "Experiment ended, but resource cleanup could not "
+                f"be confirmed: {resource_cleanup_error}"
+            ) from resource_cleanup_error
 
         raise failures[0]
 
@@ -360,3 +551,15 @@ def run_experiment(scenario_path: str, environment: str) -> None:
     )
 
     typer.echo()
+
+def run_experiment(
+    scenario_path: str,
+    environment: str,
+) -> None:
+    """Run an experiment while exclusively locking its environment."""
+
+    with environment_lock(environment):
+        _run_experiment_locked(
+            scenario_path,
+            environment,
+        )
