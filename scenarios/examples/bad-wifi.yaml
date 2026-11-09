@@ -1,0 +1,8 @@
+name: bad-wifi
+description: Simulate an unstable network connection
+
+network:
+  latency_ms: 300
+  packet_loss_percent: 5
+
+duration_seconds: 60

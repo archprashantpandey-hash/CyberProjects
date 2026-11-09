@@ -1,0 +1,8 @@
+name: test-network
+description: Short network impairment verification
+
+network:
+  latency_ms: 100
+  packet_loss_percent: 2
+
+duration_seconds: 5

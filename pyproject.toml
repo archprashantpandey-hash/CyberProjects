@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vortex-cli"
+version = "0.1.0"
+description = "Ephemeral Linux failure experimentation platform"
+requires-python = ">=3.10"
+dependencies = [
+    "typer",
+    "pyyaml",
+    "psutil",
+    "rich>=13.7"
+]
+
+[project.scripts]
+vortex = "vortex.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["vortex*"]
