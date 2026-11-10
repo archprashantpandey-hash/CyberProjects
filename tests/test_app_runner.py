@@ -227,3 +227,50 @@ def test_unsupported_runtime_is_never_auto_provisioned(monkeypatch):
             "test-box",
             provision_missing_runtime=True,
         )
+
+def test_locked_execution_records_phase(monkeypatch):
+
+    recorder_class = prepare_runner(monkeypatch)
+    recorder = recorder_class("test-box")
+
+    spec = {
+        "name": "sample-app",
+        "command": ["python3", "app.py"],
+        "working_directory": ".",
+        "timeout_seconds": 30,
+        "expected_exit_code": 0,
+        "repetitions": 2,
+    }
+
+    results = runner._execute_application_locked(
+        "test-box",
+        spec,
+        "/opt/vortex/apps/sample-app",
+        recorder,
+        phase="baseline",
+    )
+
+    assert len(results) == 2
+
+    assert all(
+        result["status"] == "PASSED"
+        for result in results
+    )
+
+    assert all(
+        result["phase"] == "baseline"
+        for result in results
+    )
+
+    execution_events = [
+        details
+        for event, details in recorder.events
+        if event == "application_execution_completed"
+    ]
+
+    assert len(execution_events) == 2
+
+    assert all(
+        event["phase"] == "baseline"
+        for event in execution_events
+    )

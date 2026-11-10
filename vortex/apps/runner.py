@@ -47,6 +47,72 @@ def _checked_remote(
 
     return result["stdout"].strip()
 
+def _execute_application_locked(
+    environment: str,
+    spec: dict,
+    working_directory: str,
+    recorder: EventRecorder,
+    *,
+    phase: str | None = None,
+    results: list | None = None,
+) -> list:
+    """
+    Execute configured application repetitions.
+
+    The caller must already hold the environment lock.
+    This function deliberately does not acquire another lock.
+    """
+
+    if results is None:
+        results = []
+
+    for repetition in range(
+        1,
+        spec["repetitions"] + 1,
+    ):
+
+        execution = exec_instance(
+            environment,
+            spec["command"],
+            timeout_seconds=spec["timeout_seconds"],
+            user=APPLICATION_UID,
+            group=APPLICATION_GID,
+            cwd=working_directory,
+        )
+
+        passed = (
+            not execution["timed_out"]
+            and execution["exit_code"]
+            == spec["expected_exit_code"]
+        )
+
+        result = {
+            "repetition": repetition,
+            "command": spec["command"],
+            "expected_exit_code": spec["expected_exit_code"],
+            **execution,
+            "status": (
+                "PASSED" if passed else
+                "TIMEOUT" if execution["timed_out"] else
+                "FAILED"
+            ),
+        }
+
+        if phase is not None:
+            result["phase"] = phase
+
+        results.append(result)
+
+        recorder.record(
+            "application_execution_completed",
+            {
+                "application": spec["name"],
+                **result,
+            },
+        )
+
+    return results
+
 
 def run_application(
     specification: str,
@@ -225,53 +291,14 @@ def run_application(
                         "runtime verification failed."
                     )
 
-            # Keep the existing repetition loop immediately below.
-
-            # Execute the application only after runtime verification.
-            for repetition in range(
-                1,
-                spec["repetitions"] + 1,
-            ):
-
-                execution = exec_instance(
-                    environment,
-                    spec["command"],
-                    timeout_seconds=spec["timeout_seconds"],
-                    user=APPLICATION_UID,
-                    group=APPLICATION_GID,
-                    cwd=working_directory.as_posix(),
-                )
-
-                passed = (
-                    not execution["timed_out"]
-                    and execution["exit_code"]
-                    == spec["expected_exit_code"]
-                )
-
-                result = {
-                    "repetition": repetition,
-                    "command": spec["command"],
-                    "expected_exit_code": (
-                        spec["expected_exit_code"]
-                    ),
-                    **execution,
-                    "status": (
-                        "PASSED" if passed else
-                        "TIMEOUT" if execution["timed_out"] else
-                        "FAILED"
-                    ),
-                }
-
-                results.append(result)
-
-                recorder.record(
-                    "application_execution_completed",
-                    {
-                        "application": spec["name"],
-                        **result,
-                    },
-                )
-
+# Execute the application only after runtime verification.
+            results = _execute_application_locked(
+                environment,
+                spec,
+                working_directory.as_posix(),
+                recorder,
+                results=results,
+            )
         except KeyboardInterrupt:
 
             recorder.record(
