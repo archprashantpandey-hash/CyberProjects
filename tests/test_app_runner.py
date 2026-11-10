@@ -227,4 +227,3 @@ def test_unsupported_runtime_is_never_auto_provisioned(monkeypatch):
             "test-box",
             provision_missing_runtime=True,
         )
-        

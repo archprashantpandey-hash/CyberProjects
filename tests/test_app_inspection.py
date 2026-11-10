@@ -84,4 +84,3 @@ def test_inspection_does_not_execute_application(tmp_path):
     assert source.joinpath("app.py").read_text(
         encoding="utf-8"
     ) == "print('Hello Vortex')"
-    

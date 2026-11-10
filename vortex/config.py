@@ -4,6 +4,10 @@ import re
 from pathlib import Path
 
 import yaml
+from vortex.apps.spec import (
+    ApplicationSpecError,
+    load_application_spec,
+)
 
 
 class ScenarioError(ValueError):
@@ -251,6 +255,79 @@ def load_scenario(path: str) -> dict:
         })
 
     data["name"] = name.strip()
+
+    # Validate optional application configuration.
+    if "application" in data:
+
+        application = data["application"]
+
+        if not isinstance(application, dict):
+            raise ScenarioError(
+                "application must be a YAML mapping."
+            )
+
+        allowed_application_keys = {"specification"}
+
+        unknown_application_keys = (
+            set(application) - allowed_application_keys
+        )
+
+        if unknown_application_keys:
+            raise ScenarioError(
+                "Unsupported application option(s): "
+                + ", ".join(
+                    sorted(map(str, unknown_application_keys))
+                )
+            )
+
+        specification = application.get("specification")
+
+        if (
+            not isinstance(specification, str)
+            or not specification.strip()
+            or "\x00" in specification
+        ):
+            raise ScenarioError(
+                "application.specification must be a valid file path."
+            )
+
+        specification_path = Path(
+            specification
+        ).expanduser()
+
+        if not specification_path.is_absolute():
+            specification_path = (
+                file_path.expanduser().resolve().parent
+                / specification_path
+            )
+
+        try:
+            specification_path = specification_path.resolve(
+                strict=True
+            )
+
+        except OSError as exc:
+            raise ScenarioError(
+                "Application specification file does not exist."
+            ) from exc
+
+        if not specification_path.is_file():
+            raise ScenarioError(
+                "Application specification must point to a file."
+            )
+
+        try:
+            # Validate the application specification itself.
+            load_application_spec(str(specification_path))
+
+        except ApplicationSpecError as exc:
+            raise ScenarioError(
+                f"Invalid application specification: {exc}"
+            ) from exc
+
+        data["application"] = {
+            "specification": str(specification_path),
+        }
 
     data["network"] = {
         "latency_ms": latency,

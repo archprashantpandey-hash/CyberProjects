@@ -169,3 +169,99 @@ checks:
 
     with pytest.raises(ScenarioError, match="timeout_seconds"):
         load_scenario(str(scenario_file))
+
+def test_load_scenario_with_application(tmp_path):
+
+    scenario_dir = tmp_path / "scenarios" / "examples"
+    application_dir = tmp_path / "examples" / "sample-app"
+
+    scenario_dir.mkdir(parents=True)
+    application_dir.mkdir(parents=True)
+
+    (application_dir / "app.py").write_text(
+        "print('application started')\n",
+        encoding="utf-8",
+    )
+
+    application_spec = application_dir / "application.yaml"
+
+    application_spec.write_text(
+        """
+name: sample-app
+source: .
+command:
+  - python3
+  - app.py
+working_directory: .
+timeout_seconds: 30
+expected_exit_code: 0
+repetitions: 3
+""",
+        encoding="utf-8",
+    )
+
+    scenario_file = scenario_dir / "scenario.yaml"
+
+    scenario_file.write_text(
+        """
+name: application-resilience
+duration_seconds: 30
+
+application:
+  specification: ../../examples/sample-app/application.yaml
+
+network:
+  latency_ms: 100
+  packet_loss_percent: 2
+""",
+        encoding="utf-8",
+    )
+
+    scenario = load_scenario(str(scenario_file))
+
+    assert scenario["application"]["specification"] == str(
+        application_spec.resolve()
+    )
+
+
+def test_rejects_missing_application_specification(tmp_path):
+
+    scenario_file = tmp_path / "scenario.yaml"
+
+    scenario_file.write_text(
+        """
+name: application-resilience
+duration_seconds: 10
+
+application:
+  specification: missing-application.yaml
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ScenarioError,
+        match="does not exist",
+    ):
+        load_scenario(str(scenario_file))
+
+
+def test_rejects_invalid_application_configuration(tmp_path):
+
+    scenario_file = tmp_path / "scenario.yaml"
+
+    scenario_file.write_text(
+        """
+name: application-resilience
+duration_seconds: 10
+
+application: invalid-value
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ScenarioError,
+        match="application must be a YAML mapping",
+    ):
+        load_scenario(str(scenario_file))

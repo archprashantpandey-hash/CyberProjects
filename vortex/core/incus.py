@@ -362,7 +362,7 @@ def push_instance_path(
         f"{name}/{target_path.as_posix().lstrip('/')}",
     ])
 
-    run_incus(*arguments) 
+    run_incus(*arguments)
 
 def _output_text(value) -> str:
     """Convert subprocess output into text."""
