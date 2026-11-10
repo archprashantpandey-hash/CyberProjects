@@ -246,6 +246,14 @@ def generate_report(environment: str) -> str:
         for event in events
     )
 
+    comparison_event = next(
+        (
+            event for event in events
+            if event.get("event") == "application_resilience_compared"
+        ),
+        None,
+    )
+
     check_events = [
         event
         for event in events
@@ -279,7 +287,6 @@ def generate_report(environment: str) -> str:
     ]
 
     if applied:
-
         network = applied.get("details", {})
 
         lines.extend([
@@ -289,6 +296,44 @@ def generate_report(environment: str) -> str:
 
     else:
         lines.append("No successful network impairment recorded.")
+
+    if comparison_event:
+        comparison = comparison_event.get("details", {})
+        baseline = comparison.get("baseline", {})
+        chaos = comparison.get("chaos", {})
+
+        lines.extend([
+            "",
+            "APPLICATION RESILIENCE",
+            "-" * 35,
+            f"Application: {comparison.get('application', 'Unknown')}",
+            (
+                f"Baseline: {baseline.get('passed', 0)}/"
+                f"{baseline.get('runs', 0)} passed"
+            ),
+            (
+                f"Under chaos: {chaos.get('passed', 0)}/"
+                f"{chaos.get('runs', 0)} passed"
+            ),
+            (
+                "Baseline average duration: "
+                f"{baseline.get('average_duration_seconds', 0):.3f} seconds"
+            ),
+            (
+                "Chaos average duration: "
+                f"{chaos.get('average_duration_seconds', 0):.3f} seconds"
+            ),
+            (
+                "Execution time change: "
+                f"{comparison.get('average_duration_change_percent', 0):+.2f}%"
+            ),
+            (
+                "Failure rate change: "
+                f"{comparison.get('failure_rate_change_percentage_points', 0):+.2f} "
+                "percentage points"
+            ),
+            f"Outcome: {comparison.get('failure_outcome', 'UNKNOWN')}",
+        ])
 
     lines.extend([
         "",

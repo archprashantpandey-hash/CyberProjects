@@ -1,11 +1,14 @@
 name: application-resilience
-description: Verify workload checks during network impairment
+description: Measure HTTP application behaviour during network impairment
+
+application:
+  specification: ../../examples/sample-app/application.yaml
 
 network:
   latency_ms: 100
   packet_loss_percent: 2
 
-duration_seconds: 10
+duration_seconds: 30
 
 checks:
   - name: container-identity

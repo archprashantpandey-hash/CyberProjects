@@ -228,3 +228,65 @@ def test_application_execution_report(tmp_path, monkeypatch):
     assert (
         tmp_path / "reports" / "test-box-report.txt"
     ).is_file()
+
+def test_experiment_report_includes_application_resilience_comparison(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+
+    write_events(
+        tmp_path,
+        "test-box",
+        [
+            make_event(
+                "experiment_started",
+                {"scenario": "application-resilience"},
+            ),
+            make_event(
+                "network_chaos_applied",
+                {
+                    "latency_ms": 100,
+                    "packet_loss_percent": 2,
+                },
+            ),
+            make_event(
+                "application_resilience_compared",
+                {
+                    "application": "sample-app",
+                    "baseline": {
+                        "runs": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "failure_rate_percent": 0.0,
+                        "average_duration_seconds": 0.251,
+                    },
+                    "chaos": {
+                        "runs": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "failure_rate_percent": 0.0,
+                        "average_duration_seconds": 2.496,
+                    },
+                    "average_duration_change_seconds": 2.245,
+                    "average_duration_change_percent": 894.42,
+                    "failure_rate_change_percentage_points": 0.0,
+                    "failure_outcome": "UNCHANGED",
+                },
+            ),
+            make_event("experiment_duration_completed"),
+            make_event("experiment_finished"),
+        ],
+    )
+
+    report = generate_report("test-box")
+
+    assert "APPLICATION RESILIENCE" in report
+    assert "Application: sample-app" in report
+    assert "Baseline: 3/3 passed" in report
+    assert "Under chaos: 3/3 passed" in report
+    assert "Baseline average duration: 0.251 seconds" in report
+    assert "Chaos average duration: 2.496 seconds" in report
+    assert "Execution time change: +894.42%" in report
+    assert "Failure rate change: +0.00 percentage points" in report
+    assert "Outcome: UNCHANGED" in report

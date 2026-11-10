@@ -5,6 +5,10 @@ source: .
 command:
   - python3
   - app.py
+  - --url
+  - "http://10.213.207.42:8000/health"
+  - --requests
+  - "10"
 
 working_directory: .
 
