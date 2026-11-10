@@ -47,6 +47,166 @@ def _checked_remote(
 
     return result["stdout"].strip()
 
+def _prepare_application_locked(
+    environment: str,
+    spec: dict,
+    recorder: EventRecorder,
+    *,
+    provision_missing_runtime: bool = False,
+) -> dict:
+    """
+    Verify and prepare an application for execution.
+
+    The caller must already hold the environment lock.
+    """
+
+    application_root = (
+        PurePosixPath(APPLICATION_ROOT) / spec["name"]
+    )
+
+    relative_working_directory = PurePosixPath(
+        spec["working_directory"]
+    )
+
+    if (
+        relative_working_directory.is_absolute()
+        or ".." in relative_working_directory.parts
+    ):
+        raise ApplicationRunError(
+            "Unsafe application working directory."
+        )
+
+    working_directory = (
+        application_root / relative_working_directory
+    )
+
+    # Verify application deployment.
+    _checked_remote(
+        environment,
+        ["test", "-d", application_root.as_posix()],
+        "Application is not loaded in this environment",
+    )
+
+    _checked_remote(
+        environment,
+        ["test", "-d", working_directory.as_posix()],
+        "Application working directory is missing",
+    )
+
+    # Verify the dedicated execution identity.
+    uid = _checked_remote(
+        environment,
+        ["id", "-u", APPLICATION_USER],
+        "Could not verify application UID",
+    )
+
+    gid = _checked_remote(
+        environment,
+        ["id", "-g", APPLICATION_USER],
+        "Could not verify application GID",
+    )
+
+    if (
+        uid != str(APPLICATION_UID)
+        or gid != str(APPLICATION_GID)
+    ):
+        raise ApplicationRunError(
+            "Application execution identity does not match "
+            "the configured security identity."
+        )
+
+    ownership = _checked_remote(
+        environment,
+        [
+            "stat",
+            "-c",
+            "%u:%g:%a",
+            application_root.as_posix(),
+        ],
+        "Could not verify application directory ownership",
+    )
+
+    if ownership != (
+        f"{APPLICATION_UID}:{APPLICATION_GID}:750"
+    ):
+        raise ApplicationRunError(
+            "Application directory ownership or permissions "
+            "have changed."
+        )
+
+    # Detect the required runtime.
+    runtime_info = inspect_runtime(
+        environment,
+        spec["command"],
+    )
+
+    recorder.record(
+        "application_runtime_detected",
+        {
+            "application": spec["name"],
+            **runtime_info,
+        },
+    )
+
+    provisioning_info = None
+
+    # Install only supported runtimes and only with permission.
+    if not runtime_info["available"]:
+
+        if not runtime_info["supported"]:
+            raise ApplicationRunError(
+                f"Executable '{runtime_info['executable']}' "
+                "is unavailable and cannot be automatically "
+                "provisioned."
+            )
+
+        if not provision_missing_runtime:
+            raise ApplicationRunError(
+                f"Required runtime '{runtime_info['runtime']}' "
+                "is missing. Use --provision-runtime "
+                "to install it."
+            )
+
+        provisioning_info = provision_runtime(
+            environment,
+            spec["command"],
+        )
+
+        recorder.record(
+            "application_runtime_provisioned",
+            {
+                "application": spec["name"],
+                **provisioning_info,
+            },
+        )
+
+        # Verify the installation rather than trusting apt.
+        runtime_info = inspect_runtime(
+            environment,
+            spec["command"],
+        )
+
+        recorder.record(
+            "application_runtime_verified",
+            {
+                "application": spec["name"],
+                **runtime_info,
+            },
+        )
+
+        if not runtime_info["available"]:
+            raise ApplicationRunError(
+                "Runtime installation completed, but "
+                "runtime verification failed."
+            )
+
+    return {
+        "application_root": application_root.as_posix(),
+        "working_directory": working_directory.as_posix(),
+        "runtime_info": runtime_info,
+        "provisioning_info": provisioning_info,
+    }
+
 def _execute_application_locked(
     environment: str,
     spec: dict,
@@ -124,84 +284,10 @@ def run_application(
 
     spec = load_application_spec(specification)
 
-    application_root = (
-        PurePosixPath(APPLICATION_ROOT) / spec["name"]
-    )
-
-    relative_working_directory = PurePosixPath(
-        spec["working_directory"]
-    )
-
-    if (
-        relative_working_directory.is_absolute()
-        or ".." in relative_working_directory.parts
-    ):
-        raise ApplicationRunError(
-            "Unsafe application working directory."
-        )
-
-    working_directory = (
-        application_root / relative_working_directory
-    )
-
     results = []
     started = time.monotonic()
 
     with environment_lock(environment):
-
-        # Verify that the application is actually loaded.
-        _checked_remote(
-            environment,
-            ["test", "-d", application_root.as_posix()],
-            "Application is not loaded in this environment",
-        )
-
-        _checked_remote(
-            environment,
-            ["test", "-d", working_directory.as_posix()],
-            "Application working directory is missing",
-        )
-
-        # Verify the dedicated application identity.
-        uid = _checked_remote(
-            environment,
-            ["id", "-u", APPLICATION_USER],
-            "Could not verify application UID",
-        )
-
-        gid = _checked_remote(
-            environment,
-            ["id", "-g", APPLICATION_USER],
-            "Could not verify application GID",
-        )
-
-        if (
-            uid != str(APPLICATION_UID)
-            or gid != str(APPLICATION_GID)
-        ):
-            raise ApplicationRunError(
-                "Application execution identity does not match "
-                "the configured security identity."
-            )
-
-        ownership = _checked_remote(
-            environment,
-            [
-                "stat",
-                "-c",
-                "%u:%g:%a",
-                application_root.as_posix(),
-            ],
-            "Could not verify application directory ownership",
-        )
-
-        if ownership != (
-            f"{APPLICATION_UID}:{APPLICATION_GID}:750"
-        ):
-            raise ApplicationRunError(
-                "Application directory ownership or permissions "
-                "have changed."
-            )
 
         recorder = EventRecorder(environment)
 
@@ -221,84 +307,28 @@ def run_application(
             start_details,
         )
 
-        runtime_info = None
-        provisioning_info = None
-
         try:
 
-            # Detect the required runtime.
-            runtime_info = inspect_runtime(
+            prepared = _prepare_application_locked(
                 environment,
-                spec["command"],
+                spec,
+                recorder,
+                provision_missing_runtime=(
+                    provision_missing_runtime
+                ),
             )
 
-            recorder.record(
-                "application_runtime_detected",
-                {
-                    "application": spec["name"],
-                    **runtime_info,
-                },
-            )
+            runtime_info = prepared["runtime_info"]
+            provisioning_info = prepared["provisioning_info"]
 
-            # Handle missing runtimes.
-            if not runtime_info["available"]:
-
-                if not runtime_info["supported"]:
-                    raise ApplicationRunError(
-                        f"Executable '{runtime_info['executable']}' "
-                        "is unavailable and cannot be automatically "
-                        "provisioned."
-                    )
-
-                if not provision_missing_runtime:
-                    raise ApplicationRunError(
-                        f"Required runtime '{runtime_info['runtime']}' "
-                        "is missing. Use --provision-runtime "
-                        "to install it."
-                    )
-
-                # Explicitly authorised provisioning.
-                provisioning_info = provision_runtime(
-                    environment,
-                    spec["command"],
-                )
-
-                recorder.record(
-                    "application_runtime_provisioned",
-                    {
-                        "application": spec["name"],
-                        **provisioning_info,
-                    },
-                )
-
-                # Verify the actual installation.
-                runtime_info = inspect_runtime(
-                    environment,
-                    spec["command"],
-                )
-
-                recorder.record(
-                    "application_runtime_verified",
-                    {
-                        "application": spec["name"],
-                        **runtime_info,
-                    },
-                )
-
-                if not runtime_info["available"]:
-                    raise ApplicationRunError(
-                        "Runtime installation completed, but "
-                        "runtime verification failed."
-                    )
-
-# Execute the application only after runtime verification.
             results = _execute_application_locked(
                 environment,
                 spec,
-                working_directory.as_posix(),
+                prepared["working_directory"],
                 recorder,
                 results=results,
             )
+
         except KeyboardInterrupt:
 
             recorder.record(

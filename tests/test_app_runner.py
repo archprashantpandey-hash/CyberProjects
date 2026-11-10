@@ -274,3 +274,66 @@ def test_locked_execution_records_phase(monkeypatch):
         event["phase"] == "baseline"
         for event in execution_events
     )
+
+def test_prepare_application_verifies_runtime(monkeypatch):
+
+    recorder_class = prepare_runner(monkeypatch)
+    recorder = recorder_class("test-box")
+
+    monkeypatch.setattr(
+        runner,
+        "inspect_runtime",
+        lambda environment, command: {
+            "runtime": "Python 3",
+            "executable": "python3",
+            "supported": True,
+            "available": True,
+            "version": "Python 3.11.2",
+        },
+    )
+
+    spec = {
+        "name": "sample-app",
+        "command": ["python3", "app.py"],
+        "working_directory": ".",
+    }
+
+    prepared = runner._prepare_application_locked(
+        "test-box",
+        spec,
+        recorder,
+    )
+
+    assert prepared["working_directory"] == (
+        "/opt/vortex/apps/sample-app"
+    )
+
+    assert prepared["runtime_info"]["available"] is True
+    assert prepared["provisioning_info"] is None
+
+    assert any(
+        event == "application_runtime_detected"
+        for event, details in recorder.events
+    )
+
+
+def test_prepare_application_rejects_unsafe_directory(monkeypatch):
+
+    recorder_class = prepare_runner(monkeypatch)
+    recorder = recorder_class("test-box")
+
+    spec = {
+        "name": "sample-app",
+        "command": ["python3", "app.py"],
+        "working_directory": "../outside",
+    }
+
+    with pytest.raises(
+        runner.ApplicationRunError,
+        match="Unsafe application working directory",
+    ):
+        runner._prepare_application_locked(
+            "test-box",
+            spec,
+            recorder,
+        )
