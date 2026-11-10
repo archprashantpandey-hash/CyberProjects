@@ -1,0 +1,17 @@
+name: sample-app
+
+source: .
+
+command:
+  - python3
+  - app.py
+
+working_directory: .
+
+timeout_seconds: 30
+expected_exit_code: 0
+repetitions: 3
+
+discovery:
+  cpu: true
+  memory: true

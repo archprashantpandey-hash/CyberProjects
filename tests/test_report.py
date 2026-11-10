@@ -170,3 +170,61 @@ def test_report_rejects_unsafe_environment_name(tmp_path, monkeypatch):
         generate_report("../outside")
 
     assert not (tmp_path / "outside-report.txt").exists()
+
+def test_application_execution_report(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    write_events(
+        tmp_path,
+        "test-box",
+        [
+            make_event(
+                "application_run_started",
+                {
+                    "application": "sample-app",
+                    "command": ["python3", "app.py"],
+                    "repetitions": 3,
+                    "expected_exit_code": 0,
+                    "execution_user": "vortex-app",
+                    "execution_uid": 10001,
+                    "execution_gid": 10001,
+                },
+            ),
+            make_event(
+                "application_execution_completed",
+                {
+                    "application": "sample-app",
+                    "repetition": 1,
+                    "exit_code": 0,
+                    "expected_exit_code": 0,
+                    "duration_seconds": 5.0,
+                    "timed_out": False,
+                    "status": "PASSED",
+                    "stdout": "Application completed.",
+                },
+            ),
+            make_event(
+                "application_run_finished",
+                {
+                    "status": "PASSED",
+                    "repetitions": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "duration_seconds": 5.0,
+                },
+            ),
+        ],
+    )
+
+    report = generate_report("test-box")
+
+    assert "VORTEX APPLICATION REPORT" in report
+    assert "Application:       sample-app" in report
+    assert "Status:            PASSED" in report
+    assert "Execution user:    vortex-app" in report
+    assert "Successful executions: 1" in report
+    assert "Application completed." in report
+
+    assert (
+        tmp_path / "reports" / "test-box-report.txt"
+    ).is_file()

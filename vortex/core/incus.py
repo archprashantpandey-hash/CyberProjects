@@ -12,6 +12,7 @@ from vortex.lifecycle.ttl import (
     is_expired,
     utc_now,
 )
+from pathlib import Path, PurePosixPath
 
 
 IMAGE = "images:debian/12"
@@ -314,6 +315,55 @@ def destroy_instance(
         with environment_lock(name):
             perform_destroy()
 
+def push_instance_path(
+    name: str,
+    source: str,
+    target: str,
+) -> None:
+    """Safely transfer a local file or directory into a managed instance."""
+
+    require_active_environment(name)
+
+    try:
+        source_path = Path(source).expanduser().resolve(strict=True)
+
+    except OSError as exc:
+        raise IncusError(
+            f"Application source could not be accessed: {exc}"
+        ) from exc
+
+    if not source_path.is_file() and not source_path.is_dir():
+        raise IncusError(
+            "Application source must be a regular file or directory."
+        )
+
+    target_path = PurePosixPath(target)
+
+    if (
+        not target_path.is_absolute()
+        or ".." in target_path.parts
+        or target_path == PurePosixPath("/")
+    ):
+        raise IncusError(
+            "Invalid application destination path."
+        )
+
+    arguments = [
+        "file",
+        "push",
+        "--create-dirs",
+    ]
+
+    if source_path.is_dir():
+        arguments.append("--recursive")
+
+    arguments.extend([
+        str(source_path),
+        f"{name}/{target_path.as_posix().lstrip('/')}",
+    ])
+
+    run_incus(*arguments) 
+
 def _output_text(value) -> str:
     """Convert subprocess output into text."""
 
@@ -330,8 +380,12 @@ def exec_instance(
     name: str,
     command: list[str],
     timeout_seconds: float = 10,
+    *,
+    user: int | None = None,
+    group: int | None = None,
+    cwd: str | None = None,
 ) -> dict:
-    """Execute an argument-based command inside a managed container."""
+    """Execute a command inside a managed container."""
 
     require_active_environment(name)
 
@@ -350,21 +404,66 @@ def exec_instance(
     if (
         isinstance(timeout_seconds, bool)
         or not isinstance(timeout_seconds, (int, float))
-        or not 0 < timeout_seconds <= 120
+        or not 0 < timeout_seconds <= 300
     ):
         raise IncusError("Invalid command timeout.")
+
+    if (user is None) != (group is None):
+        raise IncusError(
+            "User and group must be specified together."
+        )
+
+    for label, value in (
+        ("user", user),
+        ("group", group),
+    ):
+        if value is not None and (
+            type(value) is not int or value < 0
+        ):
+            raise IncusError(
+                f"Invalid execution {label} ID."
+            )
+
+    if cwd is not None:
+
+        if not isinstance(cwd, str) or "\x00" in cwd:
+            raise IncusError("Invalid working directory.")
+
+        cwd_path = PurePosixPath(cwd)
+
+        if (
+            not cwd_path.is_absolute()
+            or ".." in cwd_path.parts
+        ):
+            raise IncusError(
+                "Working directory must be an absolute safe path."
+            )
+
+    arguments = [
+        INCUS,
+        "exec",
+        name,
+    ]
+
+    if user is not None:
+        arguments.extend(["--user", str(user)])
+
+    if group is not None:
+        arguments.extend(["--group", str(group)])
+
+    if cwd is not None:
+        arguments.extend(["--cwd", cwd])
+
+    arguments.extend([
+        "--",
+        *command,
+    ])
 
     started = time.monotonic()
 
     try:
         result = subprocess.run(
-            [
-                INCUS,
-                "exec",
-                name,
-                "--",
-                *command,
-            ],
+            arguments,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,

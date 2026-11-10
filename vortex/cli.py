@@ -49,6 +49,14 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+from vortex.apps.commands import app as application_app
+
+app.add_typer(
+    application_app,
+    name="app",
+    help="Inspect and manage applications.",
+)
+
 SCENARIO_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
 

@@ -6,6 +6,162 @@ from pathlib import Path
 
 from vortex.core.incus import validate_name
 
+def _generate_application_report(
+    environment: str,
+    events: list[dict],
+
+) -> str:
+    """Generate a report for the latest application execution."""
+
+    first = events[0]
+    details = first.get("details", {})
+
+    executions = [
+        event.get("details", {})
+        for event in events
+        if event.get("event") == "application_execution_completed"
+    ]
+
+    passed = sum(
+        item.get("status") == "PASSED"
+        for item in executions
+    )
+
+    failed = len(executions) - passed
+
+    finished_event = next(
+        (
+            event for event in reversed(events)
+            if event.get("event") == "application_run_finished"
+        ),
+        None,
+    )
+
+    failed_event = any(
+        event.get("event") == "application_run_failed"
+        for event in events
+    )
+
+    interrupted_event = any(
+        event.get("event") == "application_run_interrupted"
+        for event in events
+    )
+
+    summary = (
+        finished_event.get("details", {})
+        if finished_event else {}
+    )
+
+    if failed_event:
+        status = "FAILED"
+    elif interrupted_event:
+        status = "INTERRUPTED"
+    elif finished_event:
+        status = summary.get(
+            "status",
+            "FAILED" if failed else "PASSED",
+        )
+    else:
+        status = "INCOMPLETE"
+
+    command = details.get("command", [])
+
+    lines = [
+        "=" * 55,
+        "              VORTEX APPLICATION REPORT",
+        "=" * 55,
+        "",
+        f"Environment:       {environment}",
+        f"Application:       {details.get('application', 'Unknown')}",
+        f"Status:            {status}",
+        f"Command:           {command}",
+        f"Execution user:    {details.get('execution_user', 'Unknown')}",
+        f"Execution UID:     {details.get('execution_uid', 'Unknown')}",
+        f"Execution GID:     {details.get('execution_gid', 'Unknown')}",
+        f"Expected exit:     {details.get('expected_exit_code', 'Unknown')}",
+        f"Configured runs:   {details.get('repetitions', 'Unknown')}",
+        f"Completed runs:    {len(executions)}",
+        f"Passed:            {passed}",
+        f"Failed:            {failed}",
+        f"Total duration:    {summary.get('duration_seconds', 'Unknown')} seconds",
+        f"Runtime:           {summary.get('runtime', 'Unknown')}",
+        f"Runtime executable: {summary.get('runtime_executable', 'Unknown')}",
+        f"Runtime version:   {summary.get('runtime_version', 'Unknown')}",
+        f"Runtime provisioned: {summary.get('runtime_provisioned', False)}",
+        f"Runtime package: {summary.get('runtime_package') or 'None'}",
+        f"Provisioning duration: {summary.get('runtime_provisioning_duration_seconds', 0)} seconds",
+        "",
+        "APPLICATION EXECUTIONS",
+        "-" * 35,
+    ]
+
+    if not executions:
+        lines.append("No execution results recorded.")
+
+    for item in executions:
+
+        lines.extend([
+            "",
+            f"Repetition: {item.get('repetition', 'Unknown')}",
+            f"Result: {item.get('status', 'UNKNOWN')}",
+            f"Exit code: {item.get('exit_code')}",
+            f"Expected exit code: {item.get('expected_exit_code')}",
+            f"Duration: {item.get('duration_seconds', 0)} seconds",
+            f"Timed out: {item.get('timed_out', False)}",
+        ])
+
+        if item.get("stdout"):
+            lines.append(f"Output: {item['stdout'][:500]}")
+
+        if item.get("stderr"):
+            lines.append(f"Error: {item['stderr'][:500]}")
+
+    lines.extend([
+        "",
+        "EXECUTION TIMELINE",
+        "-" * 35,
+    ])
+
+    for event in events:
+
+        timestamp = event.get("timestamp", "")
+        name = event.get("event", "unknown_event")
+
+        try:
+            time_text = datetime.fromisoformat(
+                timestamp
+            ).strftime("%H:%M:%S")
+
+        except (ValueError, TypeError):
+            time_text = "Unknown time"
+
+        lines.append(
+            f"{time_text}  {name.replace('_', ' ').title()}"
+        )
+
+    lines.extend([
+        "",
+        "RESULT",
+        "-" * 35,
+        f"Application status: {status}",
+        f"Executions recorded: {len(executions)}",
+        f"Successful executions: {passed}",
+        f"Failed executions: {failed}",
+        "=" * 55,
+    ])
+
+    report_text = "\n".join(lines)
+
+    output_path = (
+        Path("reports") / f"{environment}-report.txt"
+    )
+
+    output_path.write_text(
+        report_text + "\n",
+        encoding="utf-8",
+    )
+
+    return report_text
 
 def generate_report(environment: str) -> str:
     """Read experiment events and produce a detailed text report."""
@@ -44,7 +200,10 @@ def generate_report(environment: str) -> str:
     start_indexes = [
         index
         for index, event in enumerate(events)
-        if event.get("event") == "experiment_started"
+        if event.get("event") in (
+            "experiment_started",
+            "application_run_started",
+        )
     ]
 
     if not start_indexes:
@@ -53,6 +212,14 @@ def generate_report(environment: str) -> str:
         )
 
     events = events[start_indexes[-1]:]
+
+    # Application reports and experiment reports use
+    # different event structures.
+    if events[0].get("event") == "application_run_started":
+        return _generate_application_report(
+            environment,
+            events,
+        )
 
     first = events[0]
     details = first.get("details", {})
