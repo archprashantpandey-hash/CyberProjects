@@ -454,6 +454,11 @@ def run(
         ...,
         help="Target environment",
     ),
+    provision_missing_runtime: bool = typer.Option(
+        False,
+        "--provision-runtime",
+        help="Allow installation of a supported missing application runtime.",
+    ),
 ) -> None:
     """Run a verified failure experiment from a scenario."""
 
@@ -461,9 +466,10 @@ def run(
         scenario_path = resolve_scenario(scenario)
 
         run_experiment(
-            str(scenario_path),
-            environment,
-        )
+    str(scenario_path),
+    environment,
+    provision_missing_runtime=provision_missing_runtime,
+)
 
     except Exception as error:
         show_error(str(error))

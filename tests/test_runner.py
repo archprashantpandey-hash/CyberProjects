@@ -550,3 +550,221 @@ def test_resource_restoration_failure_is_reported(
     assert "resource_cleanup_failed" in event_names
     assert "resource_cleanup_verified" not in event_names
     assert "experiment_finished" not in event_names
+
+def test_application_runs_before_and_during_chaos(
+    setup_runner,
+    monkeypatch,
+):
+
+    events, calls = setup_runner
+
+    from contextlib import nullcontext
+
+    scenario = {
+        "name": "application-resilience",
+        "duration_seconds": 5,
+        "network": {
+            "latency_ms": 100,
+            "packet_loss_percent": 2,
+        },
+        "application": {
+            "specification": "/tmp/application.yaml",
+        },
+    }
+
+    application_spec = {
+        "name": "sample-app",
+        "command": ["python3", "app.py"],
+        "working_directory": ".",
+        "timeout_seconds": 30,
+        "expected_exit_code": 0,
+        "repetitions": 2,
+    }
+
+    monkeypatch.setattr(
+        runner,
+        "load_scenario",
+        lambda path: scenario,
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "load_application_spec",
+        lambda path: application_spec,
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "environment_lock",
+        lambda environment: nullcontext(),
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "_prepare_application_locked",
+        lambda *args, **kwargs: {
+            "working_directory": "/opt/vortex/apps/sample-app",
+            "runtime_info": {
+                "runtime": "Python 3",
+                "executable": "python3",
+                "available": True,
+            },
+            "provisioning_info": None,
+        },
+    )
+
+    def execute_application(
+        environment,
+        spec,
+        working_directory,
+        recorder,
+        *,
+        phase=None,
+        results=None,
+    ):
+
+        calls.append(("application", phase))
+
+        status = (
+            "PASSED" if phase == "baseline"
+            else "FAILED"
+        )
+
+        return [
+            {
+                "repetition": 1,
+                "status": status,
+                "duration_seconds": 1.0,
+                "phase": phase,
+            },
+            {
+                "repetition": 2,
+                "status": status,
+                "duration_seconds": 1.2,
+                "phase": phase,
+            },
+        ]
+
+    monkeypatch.setattr(
+        runner,
+        "_execute_application_locked",
+        execute_application,
+    )
+
+    runner.run_experiment(
+        "unused.yaml",
+        "test-box",
+    )
+
+    baseline_position = calls.index(
+        ("application", "baseline")
+    )
+
+    chaos_position = calls.index(
+        ("application", "chaos")
+    )
+
+    network_position = calls.index(
+        ("apply", "test-box", 100, 2)
+    )
+
+    assert baseline_position < network_position
+    assert network_position < chaos_position
+
+    comparison_events = [
+        details
+        for event, details in events
+        if event == "application_resilience_compared"
+    ]
+
+    assert len(comparison_events) == 1
+
+    assert (
+        comparison_events[0]["failure_outcome"]
+        == "REGRESSION"
+    )
+
+def test_experiment_passes_explicit_provisioning_permission(
+    setup_runner,
+    monkeypatch,
+):
+
+    events, calls = setup_runner
+
+    from contextlib import nullcontext
+
+    scenario = {
+        "name": "application-resilience",
+        "duration_seconds": 5,
+        "network": {
+            "latency_ms": 0,
+            "packet_loss_percent": 0,
+        },
+        "application": {
+            "specification": "/tmp/application.yaml",
+        },
+    }
+
+    application_spec = {
+        "name": "sample-app",
+        "command": ["python3", "app.py"],
+        "working_directory": ".",
+        "timeout_seconds": 30,
+        "expected_exit_code": 0,
+        "repetitions": 1,
+    }
+
+    provisioning_permissions = []
+
+    monkeypatch.setattr(
+        runner,
+        "load_scenario",
+        lambda path: scenario,
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "load_application_spec",
+        lambda path: application_spec,
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "environment_lock",
+        lambda environment: nullcontext(),
+    )
+
+    def prepare(environment, spec, recorder, **kwargs):
+
+        provisioning_permissions.append(
+            kwargs["provision_missing_runtime"]
+        )
+
+        return {
+            "working_directory": "/opt/vortex/apps/sample-app",
+        }
+
+    monkeypatch.setattr(
+        runner,
+        "_prepare_application_locked",
+        prepare,
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "_execute_application_locked",
+        lambda *args, **kwargs: [
+            {
+                "status": "PASSED",
+                "duration_seconds": 1.0,
+            }
+        ],
+    )
+
+    runner.run_experiment(
+        "unused.yaml",
+        "test-box",
+        provision_missing_runtime=True,
+    )
+
+    assert provisioning_permissions == [True]

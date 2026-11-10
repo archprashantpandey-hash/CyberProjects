@@ -5,6 +5,16 @@ import time
 
 import typer
 
+from vortex.apps.runner import (
+    _prepare_application_locked,
+    _execute_application_locked,
+)
+
+from vortex.apps.spec import load_application_spec
+
+from vortex.scenarios.application import (
+    compare_application_phases,
+)
 from vortex.chaos.network import (
     apply_network_chaos,
     check_network_tools,
@@ -64,6 +74,8 @@ def record_safely(
 def _run_experiment_locked(
     scenario_path: str,
     environment: str,
+    *,
+    provision_missing_runtime: bool = False,
 ) -> None:
     """Run a verified network experiment and restore networking."""
 
@@ -93,6 +105,14 @@ def _run_experiment_locked(
     try:
         scenario = load_scenario(scenario_path)
         require_managed(environment)
+
+        application_spec = None
+
+        if scenario.get("application"):
+            application_spec = load_application_spec(
+                scenario["application"]["specification"]
+            )
+
     except Exception:
         finish_step("FAILED")
         raise
@@ -161,12 +181,75 @@ def _run_experiment_locked(
         {"scenario": scenario["name"]},
     )
 
+    prepared_application = None
+    baseline_application_results = []
+    chaos_application_results = []
+
     experiment_error = None
     cleanup_error = None
     resource_cleanup_error = None
     recording_errors = []
 
     try:
+        # Prepare and execute the application before introducing chaos.
+        if application_spec is not None:
+
+            show_step("Preparing application")
+
+            try:
+                prepared_application = _prepare_application_locked(
+                    environment,
+                    application_spec,
+                    recorder,
+                    provision_missing_runtime=(
+                        provision_missing_runtime
+                    ),
+                )
+
+            except Exception:
+                finish_step("FAILED")
+                raise
+
+            finish_step("PASSED")
+
+            show_step("Executing baseline application")
+
+            try:
+                baseline_application_results = (
+                    _execute_application_locked(
+                        environment,
+                        application_spec,
+                        prepared_application["working_directory"],
+                        recorder,
+                        phase="baseline",
+                    )
+                )
+
+            except Exception:
+                finish_step("FAILED")
+                raise
+
+            finish_step("PASSED")
+
+            baseline_passed = sum(
+                result["status"] == "PASSED"
+                for result in baseline_application_results
+            )
+
+            record_safely(
+                recorder,
+                "application_baseline_completed",
+                {
+                    "application": application_spec["name"],
+                    "runs": len(baseline_application_results),
+                    "passed": baseline_passed,
+                    "failed": (
+                        len(baseline_application_results)
+                        - baseline_passed
+                    ),
+                },
+                recording_errors,
+            )
         if chaos_requested:
 
             show_step("Applying network changes")
@@ -262,6 +345,118 @@ def _run_experiment_locked(
             typer.echo("  No CPU or memory restrictions requested.")
 
         duration_started = time.monotonic()
+
+        # Execute the same application after chaos is applied.
+        if prepared_application is not None:
+
+            show_step("Executing application under chaos")
+
+            try:
+                chaos_application_results = (
+                    _execute_application_locked(
+                        environment,
+                        application_spec,
+                        prepared_application["working_directory"],
+                        recorder,
+                        phase="chaos",
+                    )
+                )
+
+            except Exception:
+                finish_step("FAILED")
+                raise
+
+            finish_step("PASSED")
+
+            chaos_passed = sum(
+                result["status"] == "PASSED"
+                for result in chaos_application_results
+            )
+
+            record_safely(
+                recorder,
+                "application_chaos_completed",
+                {
+                    "application": application_spec["name"],
+                    "runs": len(chaos_application_results),
+                    "passed": chaos_passed,
+                    "failed": (
+                        len(chaos_application_results)
+                        - chaos_passed
+                    ),
+                },
+                recording_errors,
+            )
+
+            # Compare application behaviour across both phases.
+            comparison = compare_application_phases(
+                baseline_application_results,
+                chaos_application_results,
+            )
+
+            record_safely(
+                recorder,
+                "application_resilience_compared",
+                {
+                    "application": application_spec["name"],
+                    **comparison,
+                },
+                recording_errors,
+            )
+
+            typer.echo()
+            typer.secho(
+                "  APPLICATION RESILIENCE",
+                fg=typer.colors.CYAN,
+                bold=True,
+            )
+
+            typer.echo(
+                f"      Baseline success: "
+                f"{comparison['baseline']['passed']}/"
+                f"{comparison['baseline']['runs']}"
+            )
+
+            typer.echo(
+                f"      Chaos success:    "
+                f"{comparison['chaos']['passed']}/"
+                f"{comparison['chaos']['runs']}"
+            )
+
+            typer.echo(
+                f"      Baseline avg:     "
+                f"{comparison['baseline']['average_duration_seconds']}s"
+            )
+
+            typer.echo(
+                f"      Chaos avg:        "
+                f"{comparison['chaos']['average_duration_seconds']}s"
+            )
+
+            change = comparison["average_duration_change_percent"]
+
+            change_display = (
+                "Undefined (zero baseline)"
+                if change is None
+                else f"{change:+.2f}%"
+            )
+
+            typer.echo(
+                f"      Execution change: {change_display}"
+            )
+
+            typer.echo(
+                f"      Failure rate Δ:   "
+                f"{comparison['failure_rate_change_percentage_points']:+.2f} "
+                f"percentage points"
+            )
+
+            typer.echo(
+                f"      Outcome:          "
+                f"{comparison['failure_outcome']}"
+            )
+
+            typer.echo()
 
         checks = scenario.get("checks", [])
 
@@ -555,6 +750,8 @@ def _run_experiment_locked(
 def run_experiment(
     scenario_path: str,
     environment: str,
+    *,
+    provision_missing_runtime: bool = False,
 ) -> None:
     """Run an experiment while exclusively locking its environment."""
 
@@ -562,4 +759,5 @@ def run_experiment(
         _run_experiment_locked(
             scenario_path,
             environment,
+            provision_missing_runtime=provision_missing_runtime,
         )
